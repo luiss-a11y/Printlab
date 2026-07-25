@@ -1625,6 +1625,7 @@
     <div id="bulk-bar" class="bulk-bar">
       <span class="bulk-count" id="bulk-count">0 selecionadas</span>
       <button class="btn-bulk-cancel" onclick="clearSelection()">Cancelar</button>
+      <button class="btn-bulk-delete" style="background:rgba(255,0,170,0.15);color:var(--accent)" onclick="sendSelectedToProduction()"><i class="ti ti-clipboard-list ic"></i> Enviar p/ Fila de Produção</button>
       <button class="btn-bulk-delete" onclick="deleteSelected()"><i class="ti ti-trash ic"></i> Excluir selecionadas</button>
     </div>
 
@@ -1878,6 +1879,9 @@
         <div class="page-title">Fila de Produção</div>
         <div class="page-sub">Vendas ainda não produzidas — visível pra todo mundo que acessa o sistema</div>
       </div>
+      <button class="btn-ghost" onclick="markAllProductionDone()" title="Útil se você importou pedidos antigos que já foram produzidos e postados">
+        <i class="ti ti-checks ic"></i> Marcar tudo como concluído
+      </button>
     </div>
 
     <div class="summary-grid" style="grid-template-columns:1fr;margin-bottom:24px;max-width:260px">
@@ -1892,13 +1896,15 @@
     <div class="info-box" style="margin-top:20px">
       <div style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:6px">💡 Como funciona</div>
       <div style="font-size:13px;color:var(--text2);line-height:1.7">
-        Toda venda registrada manualmente ou pelo botão de registro rápido entra aqui automaticamente,
-        com duas etapas: primeiro marca <strong>"Produzido?"</strong> quando a peça sair da impressora,
-        depois <strong>"Postar?"</strong> quando estiver embalada e pronta pra postagem (só libera depois
-        de marcar produzido). A venda só sai da fila quando as duas etapas estiverem concluídas. Como os
-        dados sincronizam pelo Firebase, quem mais tiver acesso ao sistema vê a mesma fila em tempo real —
-        ótimo pra dividir a produção com outra pessoa. Vendas importadas do XLSX da Shopee não entram aqui
-        (já são histórico).
+        Nenhuma venda entra aqui sozinha — você escolhe o que mandar. Na aba <strong>Vendas</strong>,
+        clica no ícone <i class="ti ti-clipboard-plus ic"></i> de uma venda específica, ou seleciona
+        várias com as caixinhas e usa "Enviar p/ Fila de Produção" em massa.<br><br>
+        Cada item tem duas etapas: primeiro marca <strong>"Produzido?"</strong> quando a peça sair da
+        impressora, depois <strong>"Postar?"</strong> quando estiver embalada (só libera depois de
+        marcar produzido). Também dá pra marcar <strong>🚩 prioridade</strong> (sobe pro topo da lista)
+        e deixar uma <strong>observação</strong> pro outro sócio ler.<br><br>
+        Como os dados sincronizam pelo Firebase, quem mais tiver acesso ao sistema vê a mesma fila,
+        as mesmas prioridades e observações em tempo real — ótimo pra dividir a produção com outra pessoa.
       </div>
     </div>
   </div>
@@ -3207,7 +3213,7 @@ function addSale(saleData) {
   const sale = {
     id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
     time: timeStr,
-    produced: false, readyToPost: false, // vendas registradas em tempo real entram na Fila de Produção
+    // Não entra na fila automaticamente — use "Enviar p/ Fila" na tabela de Vendas quando quiser
     ...saleData,
   };
   sales.push(sale);
@@ -3264,6 +3270,19 @@ function toggleReadyToPost(saleId) {
   if (document.getElementById('page-home')?.classList.contains('active')) renderHome();
 }
 
+// Marca todas as vendas pendentes como produzidas + postadas de uma vez.
+// Útil depois de importar um XLSX com pedidos antigos que já foram
+// produzidos e enviados de verdade — evita ter que clicar item por item.
+function markAllProductionDone() {
+  const pendingCount = sales.filter(isPendingProduction).length;
+  if (pendingCount === 0) { alert('Não há nenhuma venda pendente na fila.'); return; }
+  if (!confirm(`Marcar todas as ${pendingCount} venda(s) pendente(s) como produzidas e postadas?\n\nUse isso só se forem pedidos antigos que já foram entregues de verdade — não pra pedidos que ainda precisam ser feitos.`)) return;
+  sales.forEach(s => { if (isPendingProduction(s)) { s.produced = true; s.readyToPost = true; } });
+  save('pl_sales', sales);
+  renderProductionQueue();
+  if (document.getElementById('page-home')?.classList.contains('active')) renderHome();
+}
+
 // Uma venda é considerada "rastreada" nesse fluxo se tiver o campo produced
 // definido (vendas importadas do XLSX não têm, então ficam de fora).
 function isTrackedForProduction(s) { return s.produced !== undefined; }
@@ -3273,7 +3292,11 @@ function renderProductionQueue() {
   const listEl = document.getElementById('production-queue-list');
   if (!listEl) return;
 
-  const pending = sales.filter(isPendingProduction).sort((a,b) => (a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
+  const pending = sales.filter(isPendingProduction).sort((a,b) => {
+    // Prioridade primeiro, depois por data/hora (mais antigo primeiro)
+    if (!!a.priority !== !!b.priority) return a.priority ? -1 : 1;
+    return (a.date+(a.time||'')).localeCompare(b.date+(b.time||''));
+  });
 
   document.getElementById('production-queue-count').textContent = pending.length;
 
@@ -3291,23 +3314,47 @@ function renderProductionQueue() {
     const [y, m, d] = s.date.split('-');
     const producedDone = !!s.produced;
     const postDone     = !!s.readyToPost;
-    return `<div class="card" style="display:flex;align-items:center;gap:14px;margin-bottom:10px;padding:18px 20px;flex-wrap:wrap">
-      ${p?.photo ? `<img src="${p.photo}" style="width:44px;height:44px;border-radius:12px;object-fit:cover;flex-shrink:0" />` : `<div style="width:44px;height:44px;border-radius:12px;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ti-package ic"></i></div>`}
-      <div style="flex:1;min-width:160px">
-        <div style="font-weight:600;font-size:14px">${productName}${s.variationName ? ` <span style="color:var(--accent)">· ${s.variationName}</span>` : ''}</div>
-        <div style="font-size:12px;color:var(--text2);margin-top:2px">${s.qty}x · ${fmt(s.salePrice * s.qty)} · ${d}/${m}/${y}${s.time ? ' às '+s.time : ''}</div>
+    const isPriority   = !!s.priority;
+    return `<div class="card" style="margin-bottom:10px;padding:18px 20px;${isPriority ? 'border-color:var(--ruby)' : ''}">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        ${p?.photo ? `<img src="${p.photo}" style="width:44px;height:44px;border-radius:12px;object-fit:cover;flex-shrink:0" />` : `<div style="width:44px;height:44px;border-radius:12px;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ti-package ic"></i></div>`}
+        <div style="flex:1;min-width:160px">
+          <div style="font-weight:600;font-size:14px">${isPriority ? '<i class="ti ti-flag-filled ic" style="color:var(--ruby)"></i> ' : ''}${productName}${s.variationName ? ` <span style="color:var(--accent)">· ${s.variationName}</span>` : ''}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">${s.qty}x · ${fmt(s.salePrice * s.qty)} · ${d}/${m}/${y}${s.time ? ' às '+s.time : ''}</div>
+        </div>
+        <button onclick="togglePriority('${s.id}')" title="${isPriority ? 'Remover prioridade' : 'Marcar como prioridade'}" style="background:${isPriority ? 'rgba(255,0,170,0.15)' : 'var(--bg3)'};border:1px solid ${isPriority ? 'var(--ruby)' : 'var(--border)'};border-radius:10px;width:38px;height:38px;cursor:pointer;color:${isPriority ? 'var(--ruby)' : 'var(--text2)'};flex-shrink:0;display:flex;align-items:center;justify-content:center"><i class="ti ti-flag${isPriority ? '-filled' : ''} ic"></i></button>
+        <button onclick="shareSaleWhatsApp('${s.id}')" title="Compartilhar" style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;width:38px;height:38px;cursor:pointer;color:var(--text2);flex-shrink:0;display:flex;align-items:center;justify-content:center"><i class="ti ti-brand-whatsapp ic"></i></button>
+        <button onclick="toggleProduced('${s.id}')" title="${producedDone ? 'Desmarcar produzido' : 'Marcar como produzido'}"
+          style="background:${producedDone ? 'var(--bg3)' : 'var(--accent)'};border:1px solid ${producedDone ? 'var(--accent)' : 'transparent'};border-radius:10px;padding:0 14px;height:38px;cursor:pointer;color:${producedDone ? 'var(--accent)' : '#fff'};font-size:12px;font-weight:700;flex-shrink:0;white-space:nowrap">
+          ${producedDone ? '<i class="ti ti-circle-check ic"></i> Produzido' : 'Produzido?'}
+        </button>
+        <button onclick="toggleReadyToPost('${s.id}')" title="${postDone ? 'Desmarcar pronto pra postar' : 'Marcar como pronto pra postar'}" ${producedDone ? '' : 'disabled'}
+          style="background:${postDone ? 'var(--bg3)' : (producedDone ? 'var(--accent2)' : 'var(--bg3)')};border:1px solid ${postDone ? 'var(--accent2)' : 'transparent'};border-radius:10px;padding:0 14px;height:38px;cursor:${producedDone ? 'pointer' : 'not-allowed'};color:${postDone ? 'var(--accent2)' : (producedDone ? '#fff' : 'var(--text3)')};font-size:12px;font-weight:700;flex-shrink:0;white-space:nowrap;opacity:${producedDone ? '1' : '0.5'}">
+          ${postDone ? '<i class="ti ti-circle-check ic"></i> Pronto p/ postar' : '<i class="ti ti-package ic"></i> Postar?'}
+        </button>
       </div>
-      <button onclick="shareSaleWhatsApp('${s.id}')" title="Compartilhar" style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;width:38px;height:38px;cursor:pointer;color:var(--text2);flex-shrink:0;display:flex;align-items:center;justify-content:center"><i class="ti ti-brand-whatsapp ic"></i></button>
-      <button onclick="toggleProduced('${s.id}')" title="${producedDone ? 'Desmarcar produzido' : 'Marcar como produzido'}"
-        style="background:${producedDone ? 'var(--bg3)' : 'var(--accent)'};border:1px solid ${producedDone ? 'var(--accent)' : 'transparent'};border-radius:10px;padding:0 14px;height:38px;cursor:pointer;color:${producedDone ? 'var(--accent)' : '#fff'};font-size:12px;font-weight:700;flex-shrink:0;white-space:nowrap">
-        ${producedDone ? '<i class="ti ti-circle-check ic"></i> Produzido' : 'Produzido?'}
-      </button>
-      <button onclick="toggleReadyToPost('${s.id}')" title="${postDone ? 'Desmarcar pronto pra postar' : 'Marcar como pronto pra postar'}" ${producedDone ? '' : 'disabled'}
-        style="background:${postDone ? 'var(--bg3)' : (producedDone ? 'var(--accent2)' : 'var(--bg3)')};border:1px solid ${postDone ? 'var(--accent2)' : 'transparent'};border-radius:10px;padding:0 14px;height:38px;cursor:${producedDone ? 'pointer' : 'not-allowed'};color:${postDone ? 'var(--accent2)' : (producedDone ? '#fff' : 'var(--text3)')};font-size:12px;font-weight:700;flex-shrink:0;white-space:nowrap;opacity:${producedDone ? '1' : '0.5'}">
-        ${postDone ? '<i class="ti ti-circle-check ic"></i> Pronto p/ postar' : '<i class="ti ti-package ic"></i> Postar?'}
-      </button>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <input type="text" value="${(s.productionNote || '').replace(/"/g,'&quot;')}" placeholder="💬 Observação pro outro sócio... (ex: cliente pediu cor diferente)"
+          onchange="updateProductionNote('${s.id}', this.value)"
+          style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:12px" />
+      </div>
     </div>`;
   }).join('');
+}
+
+function updateProductionNote(saleId, note) {
+  const s = sales.find(x => x.id === saleId);
+  if (!s) return;
+  s.productionNote = note.trim();
+  save('pl_sales', sales);
+}
+
+function togglePriority(saleId) {
+  const s = sales.find(x => x.id === saleId);
+  if (!s) return;
+  s.priority = !s.priority;
+  save('pl_sales', sales);
+  renderProductionQueue();
 }
 
 function calcVariationFilamentCost(parts, overrideGrams) {
@@ -4397,6 +4444,9 @@ function renderSales() {
       <td style="font-weight:600;color:#34d399">${fmt(shopeeIncomeRow)}${shopeeTag}</td>
       <td style="font-weight:600;color:${totalP>0?'var(--green)':'var(--accent2)'}">${fmt(totalP)}</td>
       <td style="display:flex;gap:4px">
+        ${isTrackedForProduction(s)
+          ? `<span title="Já está na Fila de Produção" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--accent)"><i class="ti ti-clipboard-check ic"></i></span>`
+          : `<button class="btn-icon" onclick="sendToProduction('${s.id}')" title="Enviar p/ Fila de Produção"><i class="ti ti-clipboard-plus ic"></i></button>`}
         <button class="btn-icon" onclick="shareSaleWhatsApp('${s.id}')" title="Compartilhar no WhatsApp"><i class="ti ti-brand-whatsapp ic"></i></button>
         <button class="btn-icon" onclick="deleteSale('${s.id}')"><i class="ti ti-trash ic"></i></button>
       </td>`;
@@ -4504,6 +4554,36 @@ function deleteSelected() {
   if (ids.length === 0) return;
   if (!confirm(`Excluir ${ids.length} venda(s) selecionada(s)? Esta ação não pode ser desfeita.`)) return;
   sales = sales.filter(s => !ids.includes(s.id));
+  save('pl_sales', sales);
+  renderSales();
+}
+
+function sendSelectedToProduction() {
+  const ids = getSelectedIds();
+  if (ids.length === 0) return;
+  let added = 0;
+  ids.forEach(id => {
+    const s = sales.find(x => x.id === id);
+    if (s && !isTrackedForProduction(s)) {
+      s.produced = false; s.readyToPost = false;
+      added++;
+    }
+  });
+  save('pl_sales', sales);
+  clearSelection();
+  renderSales();
+  const msg = added > 0
+    ? `✅ ${added} venda(s) enviada(s) pra Fila de Produção.`
+    : 'Essas vendas já estavam na fila.';
+  alert(msg);
+}
+
+// Envia uma única venda pra fila (botão individual na tabela)
+function sendToProduction(saleId) {
+  const s = sales.find(x => x.id === saleId);
+  if (!s) return;
+  if (isTrackedForProduction(s)) { alert('Essa venda já está na Fila de Produção.'); return; }
+  s.produced = false; s.readyToPost = false;
   save('pl_sales', sales);
   renderSales();
 }
@@ -7688,6 +7768,7 @@ function importShopee(event) {
           qty,
           salePrice: priceRaw,
           shopeeStatus: row['Status do pedido'] || '',
+          // Não entra na fila automaticamente — use "Enviar p/ Fila" na tabela de Vendas quando quiser
           // Variação (cor/tamanho)
           variationName: matchedVariation ? matchedVariation.name : (variationName || null),
           _variationName: variationName || null,
