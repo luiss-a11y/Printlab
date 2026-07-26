@@ -4905,7 +4905,7 @@ function renderGoalCard(curRev, curProfit, curUnits) {
   document.getElementById('goal-target').textContent     = fmtTgt;
   document.getElementById('goal-pct').textContent        = Math.round(pct) + '%';
   document.getElementById('goal-pct').style.color        = barColor;
-  document.getElementById('goal-remaining').textContent  = remainingTxt;
+  document.getElementById('goal-remaining').innerHTML  = remainingTxt;
   document.getElementById('goal-remaining').style.color  = pct >= 100 ? 'var(--green)' : 'var(--text3)';
   document.getElementById('goal-bar').style.width        = pct + '%';
   document.getElementById('goal-bar').style.background   = barColor;
@@ -5484,7 +5484,7 @@ function renderHome() {
     document.getElementById('home-goal-bar').style.background = barColor;
     const typeLabel = monthlyGoal.type === 'revenue' ? 'receita' : monthlyGoal.type === 'profit' ? 'lucro' : 'unidades';
     const remaining = monthlyGoal.value - cur;
-    document.getElementById('home-goal-detail').textContent = remaining > 0
+    document.getElementById('home-goal-detail').innerHTML = remaining > 0
       ? `Faltam ${monthlyGoal.type === 'units' ? Math.ceil(remaining) + ' un.' : fmt(remaining)} de ${typeLabel}`
       : '<i class="ti ti-circle-check ic"></i> Meta atingida!';
   } else {
